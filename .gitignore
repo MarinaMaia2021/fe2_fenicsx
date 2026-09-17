@@ -15,3 +15,14 @@ fe2.py
 calibration.py
 coupon.py
 trainer_jax.py
+periodic_elasticity.mode
+periodic_elasticity_nonlin.py
+periodic_plasticity_nonlin.py
+periodic_plasticity_nonlin_dispcontrol.py
+plasticity.py
+plasticity(1).py
+rve_j2_pure.py
+rve_fenicsx.py
+multiscale.py
+deformation_viscoplastic.gif
+/dolfinx_materials/*
