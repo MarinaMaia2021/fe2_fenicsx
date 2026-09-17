@@ -3,7 +3,7 @@
 feprnn.py
 utilsjax.py
 testj2.py
-quadratureprnn.py
+quadrature_prnn.py
 *.data
 *.log
 rve.py
