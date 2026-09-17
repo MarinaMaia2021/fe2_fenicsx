@@ -1,0 +1,17 @@
+*.png
+*.pdf
+feprnn.py
+utilsjax.py
+testj2.py
+quadratureprnn.py
+*.data
+*.log
+rve.py
+rve_j2.py
+rve_corrected.py
+rve_ext.py
+custom.py
+fe2.py
+calibration.py
+coupon.py
+trainer_jax.py
