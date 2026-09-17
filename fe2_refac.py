@@ -17,14 +17,14 @@ import sys
 import pyvista as pv
 import os
 from quadrature import macroscaleQuadratureMap, plottingDomain
-from auxFunctions import _setup_solver, _create_loading_function, _print_cell_coordinates, _strain_vec, _compute_plotting_bounds
+from auxFunctions import _setup_solver, _create_loading_function, _print_cell_coordinates, _strain_vec, _compute_plotting_bounds, _read_external_file
 
 # Avoids paraview from opening
 if not os.getenv("DISPLAY"):
     pv.OFF_SCREEN = True
 
 # User-defined choices for solver and debugging
-key_micromodel = 'composite'
+key_micromodel = 'j2'
 direct_solver_macro = True
 direct_solver_micro = True
 verbose_solver = False
@@ -159,12 +159,19 @@ def _record_converged_step(step_index, target_disp, macromodel, macro_qmap, gdim
     macromodel.domain.comm.Barrier()
 
 
-def _plot_load_displacement_curve(displacement_history, load_history, path="load_displacement_curve.png"):
+def _plot_load_displacement_curve(displacement_history, 
+                                  load_history,
+                                  displacement_reference = None,
+                                  load_reference = None,
+                                  path="load_displacement_curve.png"):
     # TODO: make it prettier
     fig, ax = plt.subplots(figsize=(8, 5))
-    ax.plot(displacement_history, load_history, 'b-o', markersize=4, linewidth=1.5)
+    ax.plot(displacement_history, load_history, 'b-o', label = 'fenicsx dolfinx', markersize=4, linewidth=1.5)
+    if displacement_reference is not None:
+        ax.plot(displacement_reference, load_reference, 'x', color = 'red',label = 'jive', linestyle = 'dashed', markersize=4, linewidth=1.5)
     ax.set_xlabel("Average displacement at x = L [mm]")
     ax.set_ylabel("Total reaction force at x = L [N]")
+    plt.legend(loc = 'upper left')
     ax.grid(True)
     plt.tight_layout()
     plt.savefig(path, dpi=150)
@@ -316,7 +323,9 @@ def main():
 
     # Plot final load-displacement curve at the right edge of the macroscopic domain
     if is_root:
-        _plot_load_displacement_curve(displacement_history, load_history)
+        load_disp_jive_file = 'macro_jive_j2.dat'
+        disp_jive, load_jive = _read_external_file(load_disp_jive_file, columns = [1, 2])
+        _plot_load_displacement_curve(displacement_history, load_history, disp_jive, load_jive)
         if plot_tracked_cell:
             _plot_tracked_cell_response(target_cell_history, track_cell_id)
 

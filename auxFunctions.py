@@ -151,6 +151,44 @@ def _compute_plotting_bounds(L, H):
     fixed_bounds = (xmin - margin, xmax + margin, ymin - margin, ymax + margin, -1, 1)
     return fixed_bounds
 
+def _read_external_file(filename, columns=[1, 2]):
+    """
+    Reads a space-separated data file and extracts specified columns.
+    
+    Parameters:
+    -----------
+    filename : str
+        Path to the text file.
+    columns : list of int
+        0-based index or 1-based index specifying which columns to unpack.        
+    Returns:
+    --------
+    tuple of np.ndarray
+        Extracted data columns as 1D NumPy arrays (e.g., disp, load).
+    """
+    import numpy as np
+    import os
+
+    if not os.path.exists(filename):
+        raise FileNotFoundError(f"JIVE data file not found at: {filename}")
+        
+    # Load all numeric data from the space/tab-separated file
+    data = np.loadtxt(filename)
+    
+    # Return empty arrays if the file is empty
+    if data.size == 0:
+        return np.array([]), np.array([])
+    
+    # Handle single-row files to prevent 1D indexing errors
+    if data.ndim == 1:
+        data = data.reshape(1, -1)
+        
+    # Extract specified columns
+    disp = data[:, columns[0]]
+    load = data[:, columns[1]]
+    
+    return disp, load
+
 def _print_cell_coordinates(domain, cell_id):
     """
     
