@@ -9,7 +9,7 @@ Created on Wed Jun 24 12:59:17 2026
 class macroscaleQuadratureMap:
     def __init__(self, macro_domain, master_rve, u_macro, W_macro_tensor, 
                  macro_stress_field, W_macro_tangent, macro_tangent_field,
-                 verbose = False):
+                 verbose = False, strain_factor = 2):
         
         from dolfinx import fem
         import ufl
@@ -21,8 +21,8 @@ class macroscaleQuadratureMap:
         self.u_macro_converged = self.u_macro.copy()
         self.macro_stress_field = macro_stress_field
         self.macro_tangent_field = macro_tangent_field
-        
-        self.factor = 2.0
+
+        self.factor = strain_factor
         
         self.comm = self.macro_domain.comm
         self.gdim = self.macro_domain.topology.dim
@@ -158,7 +158,7 @@ class macroscaleQuadratureMap:
         
 class plottingDomain:
     def __init__(self):
-        print("Initialized robust plotting function.")
+        print("Initialized plotting function.")
 
     def update(self, macro_domain, gdim, u_macro, 
                macro_qmap, macro_stress_field, iStep, fixed_bounds):

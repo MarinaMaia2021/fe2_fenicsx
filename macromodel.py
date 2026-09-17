@@ -86,7 +86,7 @@ class Macromodel:
             gmsh.write("macro_mesh.msh")
             
             gmsh.finalize()    
-        
+            
     def _setup_functions(self):
         from dolfinx import fem
         import ufl

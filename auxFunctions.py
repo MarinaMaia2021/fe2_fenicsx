@@ -139,7 +139,19 @@ def _setup_solver(domain, directSolver = True, tag = 'macro_', verbose = False):
         ksp_solver.setOptionsPrefix(tag)
     return ksp_solver
 
-def print_cell_coordinates(domain, cell_id):
+def _strain_vec(u, strain_factor = 2.0):
+    import ufl
+    epsilon = ufl.sym(ufl.grad(u))
+    return ufl.as_vector([epsilon[0,0], epsilon[1,1], strain_factor * epsilon[0,1]])
+
+def _compute_plotting_bounds(L, H):
+    xmin, ymin = 0.0, 0.0
+    xmax, ymax = L + 0.2, H + 0.05
+    margin = 0.05 * max(xmax - xmin, ymax - ymin)
+    fixed_bounds = (xmin - margin, xmax + margin, ymin - margin, ymax + margin, -1, 1)
+    return fixed_bounds
+
+def _print_cell_coordinates(domain, cell_id):
     """
     
 
