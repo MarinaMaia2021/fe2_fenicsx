@@ -69,14 +69,22 @@ _matrix_tangent_batched = jax.jit(
 
 class ExternalJAXMatrixPhase:
     """Manages internal history states and macro-point tracking for the matrix phase."""
-    def __init__(self, num_quad_points_per_rve, num_macro_points_total):
-        self.jax_material = jax_j2.create_material()
+    def __init__(self, num_quad_points_per_rve, num_macro_points_total, material_properties = None):
+        
+        self.E_m = material_properties[0]
+        self.nu_m = material_properties[1]
+        self.sig0_m = material_properties[2]
+        self.sigu_m = material_properties[3]
+        self.b_m = material_properties[4]
+        
+        self.jax_material = jax_j2.create_material(self.E_m, self.nu_m, self.sig0_m, self.sigu_m, self.b_m)            
+            
         self.h_states_registry = [
             jax_j2.init_history(num_quad_points_per_rve)
             for _ in range(num_macro_points_total)
         ]
         self.current_macro_pt_id = 0
-        self._cached_h_state = None
+        self._cached_h_state = None        
 
     def advance_macro_point(self):
         if self._cached_h_state is not None:
@@ -84,10 +92,25 @@ class ExternalJAXMatrixPhase:
 
 
 class Micromodel:
-    def __init__(self, num_macro_cells=8, quadrature_degree=1, directSolver=False, verbose=False):
-        self.microSolverType = directSolver
+    def __init__(self, num_macro_cells=8, 
+                 quadrature_degree=1, 
+                 direct_solver=False, 
+                 verbose=False,
+                 strain_factor = 2):
+        
+        self.microSolverType = direct_solver
         self.verbose = verbose
-        self.factor = 1.0
+        self.factor = strain_factor
+        
+        material_properties = self._setup_material_properties(
+            E_m = 3.13e3,
+            nu_m = 0.37,
+            sig0_m = 31.2,
+            sigu_m = 64.8,
+            b_m = 1/0.003407,
+            E_f = 74000.0,
+            nu_f = 0.2
+            )
 
         # Geometric layout properties
         self.Lx, self.Ly = 1.0, 1.0
@@ -162,7 +185,7 @@ class Micromodel:
         self.fiber_cells = self.cells.find(2)
         
         # Fiber: Linear Isotropic Plane-Stress Constants
-        E_f, nu_f = 74000.0, 0.2
+        E_f, nu_f = self.E_f, self.nu_f
         c_11_f = E_f / (1.0 - nu_f**2)
         c_12_f = nu_f * E_f / (1.0 - nu_f**2)
         c_33_f = E_f / (2.0 * (1.0 + nu_f))
@@ -199,7 +222,7 @@ class Micromodel:
         self.ep_eq_curr = fem.Function(self.Qs, name="ep_eq_curr")
 
         self.n_qp = self.ep_eq_old.x.array.shape[0]
-
+    
         # Extract Matrix QP Indices for Selective JAX Updating
         matrix_qp_indices = []
         dofmap = self.Qv.dofmap
@@ -209,7 +232,9 @@ class Micromodel:
         self.matrix_qp_indices = np.array(matrix_qp_indices, dtype=np.int32)
         
         num_matrix_points = len(self.matrix_qp_indices)
-        self.jax_operator = ExternalJAXMatrixPhase(num_matrix_points, num_macro_cells)
+        self.jax_operator = ExternalJAXMatrixPhase(num_matrix_points,
+                                                   num_macro_cells, 
+                                                   material_properties)
 
         # Macroscopic strain functions
         self.V0 = fem.functionspace(self.mesh, ("DG", 0))
@@ -269,6 +294,19 @@ class Micromodel:
             np.array([0.0, 1.0, 0.0]),
             np.array([0.0, 0.0, 1.0])
         ]
+
+    def _setup_material_properties(self, E_m = 3.13e3, nu_m = 0.37, 
+                                   sig0_m = 31.2, sigu_m = 64.8, b_m = 1/0.003407,
+                                   E_f = 74000.0, nu_f = 0.2
+                                   ):
+        self.E_m = E_m
+        self.nu_m = nu_m
+        self.sig0_m = sig0_m
+        self.sigu_m = sigu_m
+        self.b_m = b_m
+        self.E_f = E_f
+        self.nu_f = nu_f
+        return [self.E_m, self.nu_m, self.sig0_m, self.sigu_m, self.b_m, self.E_f, self.nu_f]
 
     def _update_constitutive_fields(self):
         """Updates internal multi-material fields considering 3D vs 6D dimension mappings."""

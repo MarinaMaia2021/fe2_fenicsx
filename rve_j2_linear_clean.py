@@ -16,7 +16,18 @@ the dolfinx plasticity demos:
      updated stress and trial plastic history at every quadrature point.
   3. jax.jacfwd is used to autodiff *through* the return-mapping Newton
      solve and get the exact consistent tangent d(sigma)/d(eps) at every
-     quadrature point.
+     quadrature point -- no manual tangent derivation needed.
+  4. Stress and tangent are written into Quadrature Functions; the FE
+     residual/Jacobian forms are then *linear* algebraic operations on
+     those Functions, so dolfinx_mpc can assemble them normally.
+  5. Because the constitutive update lives outside UFL, the non-linear
+     solve is a hand-rolled Newton loop (not PETSc SNES) using
+     dolfinx_mpc.assemble_vector / assemble_matrix directly.
+  6. The homogenized tangent no longer needs ufl.derivative(): since
+     eps_tot = Eps_macro + sym(grad(v)) is affine in the macro strain, the
+     macro-strain perturbation enters the linear(ized) system exactly the
+     same way grad(dv) does. We reuse the converged, factorized Jacobian
+     and solve 3 perturbation RHS vectors built from Ct_q directly.
 """
 
 from mpi4py import MPI
@@ -69,11 +80,12 @@ class Micromodel:
         newton_tol = 1e-4,
         rel_newton_tol = 1e-3,
         newton_max_it=30,
-        directSolver = False,
-        verbose = False
+        direct_solver = False,
+        verbose = False,
+        strain_factor = 2.0
     ):
         # Direct or iterative solver
-        self.microSolverType = directSolver
+        self.microSolverType = direct_solver
         self.verbose = verbose
         self.dim = 2
         self.factor = 1.0
@@ -245,20 +257,21 @@ class Micromodel:
         self.mpc.finalize()
         
         # Strain definition        
-        def voigt(g):
-            s = ufl.sym(g)
-            return ufl.as_vector([s[0, 0], s[1, 1], self.factor * s[0, 1]])
+        def voigt(g, strain_factor = 2.0):
+            import ufl
+            epsilon = ufl.sym(ufl.grad(g))
+            return ufl.as_vector([epsilon[0, 0], epsilon[1, 1], strain_factor * epsilon[0, 1]])
 
         # Define macroscopic strain (average + periodic)
         Eps_macro = ufl.as_tensor([[self.E_xx_macro, self.E_xy_macro], [self.E_xy_macro, self.E_yy_macro]])
         self.eps_tot_form = ufl.as_vector(
             [Eps_macro[0, 0], Eps_macro[1, 1], self.factor * Eps_macro[0, 1]]
-        ) + voigt(ufl.grad(self.v))
+        ) + voigt(self.v, self.factor)
         self.eps_tot_expr = fem.Expression(self.eps_tot_form, self.Qv.element.interpolation_points)
        
         # To use in the weak form definition
-        eps_test = voigt(ufl.grad(self.u_))
-        eps_trial = voigt(ufl.grad(self.du))
+        eps_test = voigt(self.u_, strain_factor)
+        eps_trial = voigt(self.du, strain_factor)
 
         # Residual (virtual work) and tangent forms
         self.F_form = ufl.inner(self.sigma_q, eps_test) * self.dx_q
@@ -388,25 +401,28 @@ class Micromodel:
         # Assemble residual vector and jacobian matrix with MPC constraints
         b_mpc = dolfinx_mpc.assemble_vector(F_compiled, constraint=self.mpc)
         
-        #raw_b = b_mpc.getArray(readonly=True).copy()
-        #print(f"\n[Micro] Residual vector (pre-lifting):", flush=True)
-        #print(raw_b, flush = True)
+        if self.verbose:
+            raw_b = b_mpc.getArray(readonly=True).copy()
+            print(f"\n[Micro] Residual vector (pre-lifting):", flush=True)
+            print(raw_b, flush = True)
 
         b_mpc.ghostUpdate(addv=PETSc.InsertMode.ADD, mode=PETSc.ScatterMode.REVERSE)
 
         # Apply lifting for Dirichlet BCs (scale=0.0 because it's a residual update)
         dolfinx_mpc.apply_lifting(b_mpc, [J_compiled], [self.bcs], constraint=self.mpc, scale=0.0)
         
-        #raw_b_lifted = b_mpc.getArray(readonly=True).copy()
-        #print(f"\n[Micro] Raw residual (lifted):", flush=True)
-        #print(raw_b_lifted, flush = True)
+        if self.verbose:
+            raw_b_lifted = b_mpc.getArray(readonly=True).copy()
+            print(f"\n[Micro] Raw residual (lifted):", flush=True)
+            print(raw_b_lifted, flush = True)
 
         # Apply BCs            
         fem.petsc.set_bc(b_mpc, self.bcs, alpha=0.0)
         
-        #raw_b_lifted_bc = b_mpc.getArray(readonly=True).copy()
-        #print(f"\n[Micro] Raw residual (lifted+bc):", flush=True)
-        #print(raw_b_lifted_bc, flush = True)
+        if self.verbose:
+            raw_b_lifted_bc = b_mpc.getArray(readonly=True).copy()
+            print(f"\n[Micro] Raw residual (lifted+bc):", flush=True)
+            print(raw_b_lifted_bc, flush = True)
   
         # Handling different versions of petsc vec/vectors 
         if hasattr(b_mpc, "petsc_vec"):
@@ -421,8 +437,9 @@ class Micromodel:
               
         #  Print current state information
         # max_alpha = np.max(self._trial_new_ep_eq) if len(self._trial_new_ep_eq) > 0 else 0.0
-        #if self.verbose: print(f"Force residual: {res_norm:.4f}", flush=True)
+        if self.verbose: print(f"Force residual: {res_norm:.4f}", flush=True)
             
+        
         # Assemble micromodel tangent matrix
         A_petsc = dolfinx_mpc.assemble_matrix(J_compiled, constraint=self.mpc, bcs=self.bcs)
         A_petsc.assemble()
@@ -463,7 +480,8 @@ class Micromodel:
                                         ep_eq_old_slice, 
                                         v_init=None):
         """Pushes current macro strains, solves for micro-fluctuations via
-        the JAX-based J2 return map, and computes the homogenized tangent."""
+        the JAX-based J2 return map, and extracts the homogenized tangent
+        by reusing the converged consistent-tangent operator."""
 
         # Fill history
         self.ep_old.x.array[:] = ep_old_slice
@@ -506,7 +524,7 @@ class Micromodel:
             print('Strain ', E_macro_vector)
             print('Stress ', Sigma_out)
             print('Tangent stiffness matrix: ', C_tangent)
-        
+            
         return True, Sigma_out, C_tangent, self.v.x.array.copy(), self.ep_curr.x.array.copy(), self.ep_eq_curr.x.array.copy()            
             
     

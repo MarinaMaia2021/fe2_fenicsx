@@ -12,7 +12,7 @@ class CustomNewtonProblem:
                  F, J, u, bcs,
                  verbose = False,
                  directSolver = False,
-                 max_it=30, rtol=1e-3, atol=1e-4):
+                 max_it=20, rtol=1e-3, atol=1e-4):
         from dolfinx.fem import form, Function
         from dolfinx.fem.petsc import create_matrix, create_vector
         
@@ -55,7 +55,7 @@ class CustomNewtonProblem:
         if self.verbose: print('Finished initiating Newton Raphson.')
                 
     # Main solve function
-    def solve(self, verbose=False):
+    def solve(self):
         from dolfinx.common import Timer
         import petsc4py.PETSc as PETSc
         from dolfinx.fem.petsc import assemble_matrix, assemble_vector, apply_lifting, set_bc
@@ -99,10 +99,10 @@ class CustomNewtonProblem:
             else:
                  assemble_vector(self.b, self.L)
                  
-            # if self.verbose:
-            #     raw_b = self.b.getArray(readonly=True).copy()
-            #     print(f"\n[Macro] [Iter {it}] Residual vector (pre-lifting):", flush=True)
-            #     print(raw_b, flush = True)
+            if self.verbose:
+                raw_b = self.b.getArray(readonly=True).copy()
+                print(f"\n[Macro] [Iter {it}] Residual vector (pre-lifting):", flush=True)
+                print(raw_b, flush = True)
             
             # Compute b - alpha * J(u_D-u_(i-1))
             if isinstance(self.a, list):
@@ -115,10 +115,10 @@ class CustomNewtonProblem:
                 addv=PETSc.InsertMode.ADD, mode=PETSc.ScatterMode.REVERSE
             )       
             
-            # if self.verbose:
-            #     raw_b_lifted = self.b.getArray(readonly=True).copy()
-            #     print(f"\n[Macro] [Iter {it}] Raw residual (lifted):", flush=True)
-            #     print(raw_b_lifted, flush = True)
+            if self.verbose:
+                raw_b_lifted = self.b.getArray(readonly=True).copy()
+                print(f"\n[Macro] [Iter {it}] Raw residual (lifted):", flush=True)
+                print(raw_b_lifted, flush = True)
             
             # Set dx|_bc = u_{i-1}-u_D
             set_bc(self.b, self.bcs, u_petsc, -1.0)        
@@ -126,10 +126,10 @@ class CustomNewtonProblem:
                 addv=PETSc.InsertMode.INSERT_VALUES, mode=PETSc.ScatterMode.FORWARD
             )
             
-            # if self.verbose:
-            #     raw_b_lifted_bc = self.b.getArray(readonly=True).copy()
-            #     print(f"\n[Macro] [Iter {it}] Raw residual (lifted+bc):", flush=True)
-            #     print(raw_b_lifted_bc, flush = True)
+            if self.verbose:
+                raw_b_lifted_bc = self.b.getArray(readonly=True).copy()
+                print(f"\n[Macro] [Iter {it}] Raw residual (lifted+bc):", flush=True)
+                print(raw_b_lifted_bc, flush = True)
 
             # Calculate norm of residual AFTER boundary conditions are applied
             norm_res = self.b.norm(PETSc.NormType.NORM_2)
@@ -139,7 +139,7 @@ class CustomNewtonProblem:
             else:
                 rel_norm_res = norm_res / norm_res0
     
-            if verbose:
+            if self.verbose:
                 print(f"[Macro] [Iter {it:2d}] | Residual norm: {norm_res:.4e}"
                       f" Relative residual norm: {rel_norm_res:.4e}")
     
@@ -158,23 +158,23 @@ class CustomNewtonProblem:
             else:
                 assemble_matrix(self.A, self.a, bcs=self.bcs)
                 self.A.assemble()
-             #   test = assemble_matrix(self.a)
-             #   test.assemble()
+                test = assemble_matrix(self.a)
+                test.assemble()
             
-            # from scipy.sparse import csr_matrix
-            # indptr, indices, data = self.A.getValuesCSR()
-            # A_dense = csr_matrix((data, indices, indptr), shape=self.A.getSize()).toarray()
-            # if self.verbose:
-            #     print(f"\n[Macro] [Iter {it}] Macro Stiffness Matrix self.A (shape {A_dense.shape}):")
-            #     print(A_dense)
-            #     print("-" * 50)    
+            from scipy.sparse import csr_matrix
+            indptr, indices, data = self.A.getValuesCSR()
+            A_dense = csr_matrix((data, indices, indptr), shape=self.A.getSize()).toarray()
+            if self.verbose:
+                print(f"\n[Macro] [Iter {it}] Macro Stiffness Matrix self.A (shape {A_dense.shape}):")
+                print(A_dense)
+                print("-" * 50)    
                 
-            # indptr, indices, data = test.getValuesCSR()
-            # A_test = csr_matrix((data, indices, indptr), shape=test.getSize()).toarray()
-            # if self.verbose:
-            #     print(f"\n[Macro] [Iter {it}] Unconstrained Macro Stiffness Matrix self.A (shape {A_dense.shape}):")
-            #     print(A_test)
-            #     print("-" * 50)    
+            indptr, indices, data = test.getValuesCSR()
+            A_test = csr_matrix((data, indices, indptr), shape=test.getSize()).toarray()
+            if self.verbose:
+                print(f"\n[Macro] [Iter {it}] Unconstrained Macro Stiffness Matrix self.A (shape {A_dense.shape}):")
+                print(A_test)
+                print("-" * 50)    
 
             # Compute negative residual vector
             self.b.scale(-1)
@@ -192,6 +192,7 @@ class CustomNewtonProblem:
             # Update displacement candidate: u_{k+1} = u_k + du
             self.u.x.array[:] += self.du.x.array[:]
             self.u.x.scatter_forward()
+            
             if self.verbose:
                 print('[Macro] Increment of displacement ', self.du.x.array, flush = True)
                 print('[Macro] Total displacement ', self.u.x.array, flush = True)

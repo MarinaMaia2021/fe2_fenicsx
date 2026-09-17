@@ -4,38 +4,41 @@ import ufl
 from dolfinx import fem, mesh
 import matplotlib.pyplot as plt
 from macromodel import Macromodel 
-from rve_j2_linear_clean import Micromodel     
 from customnewtonproblem import CustomNewtonProblem
 import sys
 import pyvista as pv
 import os
 from quadrature import macroscaleQuadratureMap, plottingDomain
-from auxFunctions import _setup_solver, _create_loading_function, print_cell_coordinates
+from auxFunctions import _setup_solver, _create_loading_function, _print_cell_coordinates, _strain_vec, _compute_plotting_bounds
 
 # Avoids paraview from opening
 if not os.getenv("DISPLAY"):
     pv.OFF_SCREEN = True
     
-def strain_vec(u):
-    epsilon = ufl.sym(ufl.grad(u))
-    factor = 2.0
-    return ufl.as_vector([epsilon[0,0], epsilon[1,1], factor * epsilon[0,1]])
-
 # User-defined choices for solver and debugging
-directSolverMacro = True
-directSolverMicro = False
-verboseSolver = True
-verboseQuad = False
-verboseMacro = False
-verboseMicro = False
-maxMacroSubsteps = 2      
+key_micromodel = 'composite'
+direct_solver_macro = True
+direct_solver_micro = True
+verbose_solver = False
+verbose_quad = False
+verbose_macro = False
+verbose_micro = False
+max_substeps_macro = 2      
+strain_factor = 2.0
+
+if key_micromodel.lower() == 'J2':
+    from rve_j2_linear_clean import Micromodel
+elif key_micromodel.lower() == 'composite':
+    from rve_ext_clean import Micromodel
+else:
+    raise('Unkwon micromodel type')
 
 # ==============================================================================
 # Macroscopic domain
 # ==============================================================================
 
-L, H = 2., 1.
-nx, ny = 6, 3
+L, H = 1.5, 0.5
+nx, ny = 10, 4
 
 # Create macroscopic mesh
 macromodel = Macromodel(L, H, nx, ny)
@@ -61,8 +64,9 @@ if macromodel.domain.comm.Get_rank() == 0:
 # TODO: plot macro and micromodels
 
 # Initializing master RVE  
-master_rve = Micromodel(directSolver = directSolverMicro,
-                        verbose = verboseMicro) 
+master_rve = Micromodel(direct_solver = direct_solver_micro,
+                        verbose = verbose_micro,
+                        strain_factor = strain_factor) 
 
 # Instantiate the quadrature map with the new historical functions
 macro_qmap = macroscaleQuadratureMap(
@@ -73,7 +77,7 @@ macro_qmap = macroscaleQuadratureMap(
     macro_stress_field=macromodel.stress_field,
     W_macro_tangent=macromodel.W_tangent,
     macro_tangent_field=macromodel.tangent_field,
-    verbose = verboseQuad
+    verbose = verbose_quad
 )
 
 # Define weak forms
@@ -86,13 +90,8 @@ C_tangent = ufl.as_matrix([
     [macromodel.tangent_field[3], macromodel.tangent_field[4], macromodel.tangent_field[5]],
     [macromodel.tangent_field[6], macromodel.tangent_field[7], macromodel.tangent_field[8]]
 ])
-J_macro_form = ufl.inner(C_tangent * strain_vec(macromodel.u_trial), strain_vec(macromodel.u_test)) * dx_m
+J_macro_form = ufl.inner(C_tangent * _strain_vec(macromodel.u_trial, strain_factor), _strain_vec(macromodel.u_test, strain_factor)) * dx_m
         
-# Define solver type
-ksp_solver = _setup_solver(macromodel.domain, directSolverMacro, 
-                           tag = 'macro_', 
-                           verbose = verboseSolver)
-
 # ==============================================================================
 # Main 
 # ==============================================================================
@@ -107,9 +106,9 @@ displacement_history = []
 load_history = []
 
 # Create load function to prescribe displacement at the right edge 
-step_size = 0.001
-n_steps = 60
-macro_loading = _create_loading_function(n_steps=n_steps, start = 0, end = n_steps*step_size)
+step_size = 0.0005
+n_steps = 200
+macro_loading = _create_loading_function(n_steps=n_steps, start = 0, end = (n_steps-1)*step_size)
 #macro_loading = _create_loading_function(load_type = 'cyclic', n_steps = 15, unl_norm=0.03, rel_norm=0.05)
 #macro_loading = _create_loading_function(load_type = 'gp', n_steps=50, seed = 1)
 
@@ -119,22 +118,15 @@ if macromodel.domain.comm.Get_rank() == 0:
 # Define macroscopic problem
 macro_problem = CustomNewtonProblem(
     quadrature_map=macro_qmap,
-    directSolver = directSolverMacro,
-    verbose = verboseMacro,
+    directSolver = direct_solver_macro,
+    verbose = verbose_macro,
     F=F_macro_form,
     J=J_macro_form,
     u=macromodel.u,
-    bcs=macromodel.bcs,
-    max_it=20,
-    atol=1e-4,
-    rtol=1e-3
-)
+    bcs=macromodel.bcs)
 
 # For plotting only
-xmin, ymin = 0.0, 0.0
-xmax, ymax = L + 0.2, H + 0.05
-margin = 0.05 * max(xmax - xmin, ymax - ymin)
-fixed_bounds = (xmin - margin, xmax + margin, ymin - margin, ymax + margin, -1, 1)
+fixed_bounds = _compute_plotting_bounds (L, H)
 plot = plottingDomain()
 
 # Loading loop
@@ -151,7 +143,7 @@ for step_index, target_disp in enumerate(macro_loading):
     # Save state at the beginning of the stpe for backup
     u_step_start = macromodel.u.x.array.copy()
         
-    while substeps <= maxMacroSubsteps and not step_converged:
+    while substeps <= max_substeps_macro and not step_converged:
         sub_delta = delta_disp / substeps
         
         if macromodel.domain.comm.Get_rank() == 0 and substeps > 1:
@@ -256,7 +248,7 @@ for step_index, target_disp in enumerate(macro_loading):
             
     if not step_converged:   
         if macromodel.domain.comm.Get_rank() == 0:
-            print(f"\n[FATAL] Macro step {step_index} failed with {maxMacroSubsteps} sub-steps. Stopping simulation.")
+            print(f"\n[FATAL] Macro step {step_index} failed with {max_substeps_macro} sub-steps. Stopping simulation.")
             break
 
 # Plot final load-displacement curve at the right edge of the macroscopic domain
