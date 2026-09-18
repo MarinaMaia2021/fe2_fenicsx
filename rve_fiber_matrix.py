@@ -180,32 +180,60 @@ class Micromodel:
 
     def _build_periodic_unit_cell_mesh(self):
         """
-        Builds the periodic unit-cell mesh (matrix square with corner + center fiber
-        inclusions) using Gmsh, tags matrix/fiber volumes and boundary edges, and
-        registers the left-right / bottom-top periodicity used later by the MPC.
-
-        Sets self.mesh, self.cells, self.facets. Returns (gdim, fdim).
+        Builds a 2-element periodic unit-cell mesh using Gmsh.
+        Lower triangle = Inclusion (tag 1), Upper triangle = Matrix (tag 2).
         """
         gdim, fdim = 2, 1
         gmsh.initialize()
         gmsh.option.setNumber("General.Terminal", 0)
+        
+        # Force Delaunay / structured triangulation algorithm
+        gmsh.option.setNumber("Mesh.Algorithm", 5) 
         occ = gmsh.model.occ
 
-        points = [occ.add_point(*corner, 0) for corner in self.corners]
-        lines = [occ.add_line(points[i], points[(i + 1) % 4]) for i in range(4)]
-        loop = occ.add_curve_loop(lines)
-        unit_cell = occ.add_plane_surface([loop])
-        inclusions = [occ.add_disk(*corner, 0, self.R, self.R) for corner in self.fibers_center]
-        vol_dimTag = (gdim, unit_cell)
+        # 1. Create rectangle domain
+        unit_cell_tag = occ.add_rectangle(0.0, 0.0, 0.0, self.Lx, self.Ly)
 
-        out = occ.intersect([vol_dimTag], [(gdim, incl) for incl in inclusions], removeObject=False)
-        incl_dimTags = out[0]
+        # 2. Add diagonal line from (0,0) to (Lx, Ly) to cut rectangle into 2 triangles
+        p1 = occ.add_point(0.0, 0.0, 0.0)
+        p2 = occ.add_point(self.Lx, self.Ly, 0.0)
+        diag_line = occ.add_line(p1, p2)
+
+        # 3. Fragment rectangle into lower and upper triangle surfaces
+        out_dim_tags, _ = occ.fragment([(gdim, unit_cell_tag)], [(fdim, diag_line)])
         occ.synchronize()
-        occ.cut([vol_dimTag], incl_dimTags, removeTool=False)
-        occ.synchronize()
 
-        bottom_tags, right_tags, top_tags, left_tags = self._tag_boundary_edges(fdim)
+        # Extract the two surface tags
+        surfaces = [tag for dim, tag in out_dim_tags if dim == gdim]
 
+        # Identify lower vs upper triangle based on center of mass (y-coordinate)
+        surf_y_centers = [gmsh.model.occ.getCenterOfMass(gdim, s)[1] for s in surfaces]
+        if surf_y_centers[0] < surf_y_centers[1]:
+            inclusion_surf, matrix_surf = surfaces[0], surfaces[1]
+        else:
+            inclusion_surf, matrix_surf = surfaces[1], surfaces[0]
+
+        # 4. Get boundary edges
+        bottom_edges = gmsh.model.getEntitiesInBoundingBox(-0.01, -0.01, -0.01, self.Lx + 0.01, 0.01, 0.01, fdim)
+        right_edges = gmsh.model.getEntitiesInBoundingBox(self.Lx - 0.01, -0.01, -0.01, self.Lx + 0.01, self.Ly + 0.01, 0.01, fdim)
+        top_edges = gmsh.model.getEntitiesInBoundingBox(-0.01, self.Ly - 0.01, -0.01, self.Lx + 0.01, self.Ly + 0.01, 0.01, fdim)
+        left_edges = gmsh.model.getEntitiesInBoundingBox(-0.01, -0.01, -0.01, 0.01, self.Ly + 0.01, 0.01, fdim)
+
+        bottom_tags = [tag for _, tag in bottom_edges]
+        right_tags = [tag for _, tag in right_edges]
+        top_tags = [tag for _, tag in top_edges]
+        left_tags = [tag for _, tag in left_edges]
+
+        # 5. Set 2 nodes per curve (1 division = 1 element per edge)
+        all_curves = gmsh.model.getEntities(fdim)
+        for _, curve_tag in all_curves:
+            gmsh.model.mesh.setTransfiniteCurve(curve_tag, 2)
+
+        # Set transfinite surfaces to force exactly 1 triangle per surface
+        for surf in surfaces:
+            gmsh.model.mesh.setTransfiniteSurface(surf)
+
+        # 6. Apply periodic boundary constraints
         translation_right = [1, 0, 0, self.Lx, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]
         for l_tag, r_tag in zip(left_tags, right_tags):
             gmsh.model.mesh.setPeriodic(fdim, [r_tag], [l_tag], translation_right)
@@ -214,28 +242,28 @@ class Micromodel:
         for b_tag, t_tag in zip(bottom_tags, top_tags):
             gmsh.model.mesh.setPeriodic(fdim, [t_tag], [b_tag], translation_top)
 
-        gmsh.model.addPhysicalGroup(gdim, [vol_dimTag[1]], 1, name="Matrix")
-        gmsh.model.addPhysicalGroup(gdim, [tag for _, tag in incl_dimTags], 2, name="Inclusions")
+        # 7. Add Physical Groups (Tag 1 = Inclusion, Tag 2 = Matrix)
+        gmsh.model.addPhysicalGroup(gdim, [inclusion_surf], 1, name="Inclusion")
+        gmsh.model.addPhysicalGroup(gdim, [matrix_surf], 2, name="Matrix")
+
         gmsh.model.addPhysicalGroup(fdim, bottom_tags, 1, name="bottom")
         gmsh.model.addPhysicalGroup(fdim, right_tags, 2, name="right")
         gmsh.model.addPhysicalGroup(fdim, top_tags, 3, name="top")
         gmsh.model.addPhysicalGroup(fdim, left_tags, 4, name="left")
 
-        gmsh.option.setNumber("Mesh.CharacteristicLengthMin", self.h)
-        gmsh.option.setNumber("Mesh.CharacteristicLengthMax", self.h)
+        # Generate mesh
         gmsh.model.mesh.generate(gdim)
 
+        # Convert to DOLFINx mesh data
         mesh_data = model_to_mesh(gmsh.model, MPI.COMM_SELF, 0, gdim=gdim)
         self.mesh = mesh_data.mesh
         self.cells = mesh_data.cell_tags
         self.facets = mesh_data.facet_tags
-        
-        # Print mesh (for debugging)
+
         gmsh.option.setNumber("Mesh.MshFileVersion", 2.2)
         gmsh.write("micro_mesh.msh")
 
         gmsh.finalize()
-
         return gdim, fdim
 
     def _tag_boundary_edges(self, fdim):

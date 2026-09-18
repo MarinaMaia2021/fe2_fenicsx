@@ -97,61 +97,7 @@ class Micromodel:
         self.a2 = self.corners[3, :] - self.corners[0, :]
         
         # Build micromodel mesh with 2 elements and periodic boundary topology 
-        gdim, fdim = 2, 1
-        gmsh.initialize()
-        gmsh.option.setNumber("General.Terminal", 0)
-        gmsh.option.setNumber("Mesh.Algorithm", 6)
-        occ = gmsh.model.occ
-
-        unit_cell_tag = occ.add_rectangle(0.0, 0.0, 0.0, self.Lx, self.Ly)
-        occ.synchronize()
-
-        bottom_edges = gmsh.model.getEntitiesInBoundingBox(-0.01, -0.01, -0.01, self.Lx + 0.01, 0.01, 0.01, fdim)
-        right_edges = gmsh.model.getEntitiesInBoundingBox(self.Lx - 0.01, -0.01, -0.01, self.Lx + 0.01, self.Ly + 0.01, 0.01, fdim)
-        top_edges = gmsh.model.getEntitiesInBoundingBox(-0.01, self.Ly - 0.01, -0.01, self.Lx + 0.01, self.Ly + 0.01, 0.01, fdim)
-        left_edges = gmsh.model.getEntitiesInBoundingBox(-0.01, -0.01, -0.01, 0.01, self.Ly + 0.01, 0.01, fdim)
-
-        bottom_tags = [tag for _, tag in bottom_edges]
-        right_tags = [tag for _, tag in right_edges]
-        top_tags = [tag for _, tag in top_edges]
-        left_tags = [tag for _, tag in left_edges]
-
-        all_edges = bottom_tags + right_tags + top_tags + left_tags
-        
-        for edge in all_edges:
-            gmsh.model.mesh.setTransfiniteCurve(edge, 1)
-        
-        gmsh.model.mesh.setTransfiniteSurface(unit_cell_tag, "Left", [1, 2, 3, 4])
-
-        translation_right = [1, 0, 0, self.Lx, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]
-        for l_tag, r_tag in zip(left_tags, right_tags):
-            gmsh.model.mesh.setPeriodic(fdim, [r_tag], [l_tag], translation_right)
-
-        translation_top = [1, 0, 0, 0, 0, 1, 0, self.Ly, 0, 0, 1, 0, 0, 0, 0, 1]
-        for b_tag, t_tag in zip(bottom_tags, top_tags):
-            gmsh.model.mesh.setPeriodic(fdim, [t_tag], [b_tag], translation_top)
-
-        # Single physical group (entire RVE = J2 material)
-        gmsh.model.addPhysicalGroup(gdim, [unit_cell_tag], 1, name="Matrix")
-        gmsh.model.addPhysicalGroup(fdim, bottom_tags, 1, name="bottom")
-        gmsh.model.addPhysicalGroup(fdim, right_tags, 2, name="right")
-        gmsh.model.addPhysicalGroup(fdim, top_tags, 3, name="top")
-        gmsh.model.addPhysicalGroup(fdim, left_tags, 4, name="left")
-
-        # Generate model
-        gmsh.model.mesh.generate(gdim)
-
-        # Generate mesh from model
-        mesh_data = model_to_mesh(gmsh.model, MPI.COMM_SELF, 0, gdim=gdim)
-        self.mesh = mesh_data.mesh
-        self.cells = mesh_data.cell_tags
-        self.facets = mesh_data.facet_tags
-        
-        # Print mesh (for debugging)
-        gmsh.option.setNumber("Mesh.MshFileVersion", 2.2)
-        gmsh.write("micro_mesh.msh")
-        
-        gmsh.finalize()
+        gdim, fdim = self._build_periodic_unit_cell_mesh()
 
         # Compute volume of micromodel
         self.vol = fem.assemble_scalar(fem.form(1 * ufl.dx(domain=self.mesh)))
@@ -287,6 +233,72 @@ class Micromodel:
         # PETSc objects used across Newton iterations
         rank = MPI.COMM_WORLD.Get_rank()
         self._prefix = f"rve_rank{rank}_"
+
+    def _build_periodic_unit_cell_mesh(self):
+        """
+        Builds the periodic unit-cell mesh using Gmsh, tags matrix/fiber volumes 
+        and boundary edges, and registers the left-right / bottom-top periodicity
+        used later by the MPC.
+
+        Sets self.mesh, self.cells, self.facets. Returns (gdim, fdim).
+        """
+        gdim, fdim = 2, 1
+        gmsh.initialize()
+        gmsh.option.setNumber("General.Terminal", 0)
+        gmsh.option.setNumber("Mesh.Algorithm", 6)
+        occ = gmsh.model.occ
+
+        unit_cell_tag = occ.add_rectangle(0.0, 0.0, 0.0, self.Lx, self.Ly)
+        occ.synchronize()
+
+        bottom_edges = gmsh.model.getEntitiesInBoundingBox(-0.01, -0.01, -0.01, self.Lx + 0.01, 0.01, 0.01, fdim)
+        right_edges = gmsh.model.getEntitiesInBoundingBox(self.Lx - 0.01, -0.01, -0.01, self.Lx + 0.01, self.Ly + 0.01, 0.01, fdim)
+        top_edges = gmsh.model.getEntitiesInBoundingBox(-0.01, self.Ly - 0.01, -0.01, self.Lx + 0.01, self.Ly + 0.01, 0.01, fdim)
+        left_edges = gmsh.model.getEntitiesInBoundingBox(-0.01, -0.01, -0.01, 0.01, self.Ly + 0.01, 0.01, fdim)
+
+        bottom_tags = [tag for _, tag in bottom_edges]
+        right_tags = [tag for _, tag in right_edges]
+        top_tags = [tag for _, tag in top_edges]
+        left_tags = [tag for _, tag in left_edges]
+
+        all_edges = bottom_tags + right_tags + top_tags + left_tags
+        
+        for edge in all_edges:
+            gmsh.model.mesh.setTransfiniteCurve(edge, 1)
+        
+        gmsh.model.mesh.setTransfiniteSurface(unit_cell_tag, "Left", [1, 2, 3, 4])
+
+        translation_right = [1, 0, 0, self.Lx, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]
+        for l_tag, r_tag in zip(left_tags, right_tags):
+            gmsh.model.mesh.setPeriodic(fdim, [r_tag], [l_tag], translation_right)
+
+        translation_top = [1, 0, 0, 0, 0, 1, 0, self.Ly, 0, 0, 1, 0, 0, 0, 0, 1]
+        for b_tag, t_tag in zip(bottom_tags, top_tags):
+            gmsh.model.mesh.setPeriodic(fdim, [t_tag], [b_tag], translation_top)
+
+        # Single physical group (entire RVE = J2 material)
+        gmsh.model.addPhysicalGroup(gdim, [unit_cell_tag], 1, name="Matrix")
+        gmsh.model.addPhysicalGroup(fdim, bottom_tags, 1, name="bottom")
+        gmsh.model.addPhysicalGroup(fdim, right_tags, 2, name="right")
+        gmsh.model.addPhysicalGroup(fdim, top_tags, 3, name="top")
+        gmsh.model.addPhysicalGroup(fdim, left_tags, 4, name="left")
+
+        # Generate model
+        gmsh.model.mesh.generate(gdim)
+
+        # Generate mesh from model
+        mesh_data = model_to_mesh(gmsh.model, MPI.COMM_SELF, 0, gdim=gdim)
+        self.mesh = mesh_data.mesh
+        self.cells = mesh_data.cell_tags
+        self.facets = mesh_data.facet_tags
+        
+        # Print mesh (for debugging)
+        gmsh.option.setNumber("Mesh.MshFileVersion", 2.2)
+        gmsh.write("micro_mesh.msh")
+        
+        gmsh.finalize()
+        return gdim, fdim
+        
         
     def _setup_boundary_conditions(self):
             """Setup minimal Dirichlet BC at origin and periodic MPC constraints across edges."""
@@ -439,7 +451,6 @@ class Micromodel:
         # max_alpha = np.max(self._trial_new_ep_eq) if len(self._trial_new_ep_eq) > 0 else 0.0
         if self.verbose: print(f"Force residual: {res_norm:.4f}", flush=True)
             
-        
         # Assemble micromodel tangent matrix
         A_petsc = dolfinx_mpc.assemble_matrix(J_compiled, constraint=self.mpc, bcs=self.bcs)
         A_petsc.assemble()
@@ -506,10 +517,10 @@ class Micromodel:
             self.v.x.array[:] = 0.0
                         
         # Solve microscopic problem
-        microConverged = self._solve_micro_newton()
+        micro_converged = self._solve_micro_newton()
         
         # Check convergence
-        if not microConverged:
+        if not micro_converged:
             print(f"Micro solve did not converge.", flush = True)
             # Pass empty arrays
             return False, np.zeros(3), np.zeros((3, 3)), self.v.x.array.copy(), self.ep_curr.x.array.copy(), self.ep_eq_curr.x.array.copy()              

@@ -17,17 +17,16 @@ import sys
 import pyvista as pv
 import os
 from quadrature import macroscaleQuadratureMap, plottingDomain
-from auxFunctions import _setup_solver, _create_loading_function, _print_cell_coordinates, _strain_vec, _compute_plotting_bounds, _read_external_file
+from auxFunctions import _create_loading_function, _print_cell_coordinates, _strain_vec, _compute_plotting_bounds, _read_external_file
 
 # Avoids paraview from opening
 if not os.getenv("DISPLAY"):
     pv.OFF_SCREEN = True
 
 # User-defined choices for solver and debugging
-key_micromodel = 'j2'
+key_micromodel = 'j2'  # 'composite_coarse'
 direct_solver_macro = True
 direct_solver_micro = True
-verbose_solver = False
 verbose_quad = False
 verbose_macro = False
 verbose_micro = False
@@ -40,7 +39,9 @@ def _load_micromodel_class(key_micromodel):
     key = key_micromodel.lower()
     if key == 'j2':
         from rve_j2_linear_clean import Micromodel
-    elif key == 'composite':
+    elif key == 'composite_coarse':
+        from rve_fiber_matrix import Micromodel
+    elif key == 'composite_medium':
         from rve_ext_clean_refac import Micromodel
     else:
         raise ValueError(f"Unknown micromodel type: '{key_micromodel}'")
@@ -323,9 +324,19 @@ def main():
 
     # Plot final load-displacement curve at the right edge of the macroscopic domain
     if is_root:
-        load_disp_jive_file = 'macro_jive_j2.dat'
-        disp_jive, load_jive = _read_external_file(load_disp_jive_file, columns = [1, 2])
-        _plot_load_displacement_curve(displacement_history, load_history, disp_jive, load_jive)
+        disp_jive, load_jive = None, None
+        load_disp_filename = 'load_displacement_curve_' + key_micromodel + '.png'
+        
+        load_disp_jive_file = 'macro_jive_' + key_micromodel + '.dat'
+        try:
+            disp_jive, load_jive = _read_external_file(load_disp_jive_file, columns = [1, 2])
+        except (FileNotFoundError, RuntimeError, TypeError, NameError):
+            print('No JIVE data for plotting/comparison.')
+        
+        _plot_load_displacement_curve(displacement_history, load_history, 
+                                      disp_jive, load_jive,
+                                      path = load_disp_filename)
+        
         if plot_tracked_cell:
             _plot_tracked_cell_response(target_cell_history, track_cell_id)
 
