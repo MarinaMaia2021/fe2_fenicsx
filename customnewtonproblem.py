@@ -12,7 +12,7 @@ class CustomNewtonProblem:
                  F, J, u, bcs,
                  verbose = False,
                  directSolver = False,
-                 max_it=20, rtol=1e-3, atol=1e-4):
+                 max_it=30, rtol=1e-5, atol=1e-6):
         from dolfinx.fem import form, Function
         from dolfinx.fem.petsc import create_matrix, create_vector
         
@@ -135,14 +135,21 @@ class CustomNewtonProblem:
             norm_res = self.b.norm(PETSc.NormType.NORM_2)
             if it == 0:
                 norm_res0 = norm_res
+                prev_res = 0
                 rel_norm_res = 1.0
             else:
                 rel_norm_res = norm_res / norm_res0
     
-            if self.verbose:
+            if not self.verbose:
                 print(f"[Macro] [Iter {it:2d}] | Residual norm: {norm_res:.4e}"
                       f" Relative residual norm: {rel_norm_res:.4e}")
     
+            if it > 0 and norm_res > 3*prev_res:
+                # Divergence. Try with smaller step.
+                print(f"[Macro] [DIVERGENCE] Residual norm: {norm_res:.4e}"
+                      f" Previous residual norm: {prev_res:.4e}")
+                return False, it
+
             if rel_norm_res < self.rtol or norm_res < self.atol:
                 macro_converged = True
                 break
@@ -198,5 +205,6 @@ class CustomNewtonProblem:
                 print('[Macro] Total displacement ', self.u.x.array, flush = True)
             
             it += 1
+            prev_res = norm_res
                     
         return macro_converged, it

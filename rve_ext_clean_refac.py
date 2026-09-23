@@ -230,6 +230,8 @@ class Micromodel:
         self.cells = mesh_data.cell_tags
         self.facets = mesh_data.facet_tags
         
+        self.dim = self.mesh.topology.dim
+        
         # Print mesh (for debugging)
         gmsh.option.setNumber("Mesh.MshFileVersion", 2.2)
         gmsh.write("micro_mesh.msh")
@@ -337,7 +339,7 @@ class Micromodel:
         V_x, _ = self.V.sub(0).collapse()
         dof_01_x, _ = fem.locate_dofs_geometrical((self.V.sub(0), V_x), lambda x: np.isclose(x[0], 0.0) & np.isclose(x[1], self.Ly))
         self.bcs.append(fem.dirichletbc(fem.Constant(self.mesh, 0.0), dof_01_x, V_x))
-
+        
         def periodic_relation_left_right(x):
             out_x = np.zeros(x.shape)
             out_x[0] = x[0] - self.a1[0]
@@ -356,6 +358,67 @@ class Micromodel:
         self.mpc.create_periodic_constraint_topological(self.V, self.facets, 2, periodic_relation_left_right, self.bcs)
         self.mpc.create_periodic_constraint_topological(self.V, self.facets, 3, periodic_relation_bottom_top, self.bcs)
         self.mpc.finalize()
+        
+    #    self._setup_boundary_conditions()
+
+      # FROM JOEP
+    # def _setup_boundary_conditions(self):
+    #         """Setup Dirichlet BC at all corners, and periodic constraints on edges excluding corners"""
+    #         L = self.Lx
+    
+    #         def bot_left(x):
+    #             return np.isclose(x[0], 0) & np.isclose(x[1], 0)
+    
+    #         def bot_right(x):
+    #             return np.isclose(x[0], L) & np.isclose(x[1], 0.0)
+    
+    #         def top_right(x):
+    #             return np.isclose(x[0], L) & np.isclose(x[1], L)
+    
+    #         def top_left(x):
+    #             return np.isclose(x[0], 0.0) & np.isclose(x[1], L)
+    
+    #         # Fix all corners
+    #         dofs_bl = fem.locate_dofs_geometrical(self.V, bot_left)
+    #         dofs_br = fem.locate_dofs_geometrical(self.V, bot_right)
+    #         dofs_tr = fem.locate_dofs_geometrical(self.V, top_right)
+    #         dofs_tl = fem.locate_dofs_geometrical(self.V, top_left)
+    #         self.bcs = [
+    #             fem.dirichletbc(np.zeros(self.dim, dtype=default_scalar_type), dofs_bl, self.V),
+    #             fem.dirichletbc(np.zeros(self.dim, dtype=default_scalar_type), dofs_br, self.V),
+    #             fem.dirichletbc(np.zeros(self.dim, dtype=default_scalar_type), dofs_tr, self.V),
+    #             fem.dirichletbc(np.zeros(self.dim, dtype=default_scalar_type), dofs_tl, self.V),
+    #         ]
+    
+    #         # Periodic relation
+    #         def periodic_relation(x):
+    #             """Map right/top boundaries to left/bottom boundaries."""
+    #             out_x = x[0].copy()
+    #             out_y = x[1].copy()
+    #             out_z = x[2].copy()
+    #             out_x[np.isclose(x[0], L)] = 0.0
+    #             out_y[np.isclose(x[1], L)] = 0.0
+    #             return np.array([out_x, out_y, out_z])
+    
+    #         def boundary_locator(x):
+    #             """Identify right and top boundaries, excluding corners."""
+    #             on_right = np.isclose(x[0], L)
+    #             on_top = np.isclose(x[1], L)
+    #             on_left = np.isclose(x[0], 0.0)
+    #             on_bottom = np.isclose(x[1], 0.0)
+    
+    #             # Exclude corners: (L,0), (0,L), (L,L)
+    #             right_edge = on_right & ~on_top & ~on_bottom
+    #             top_edge = on_top & ~on_left & ~on_right
+    
+    #             return right_edge | top_edge
+        
+    #         # Setup multi-point constraints for periodicity
+    #         self.mpc = dolfinx_mpc.MultiPointConstraint(self.V)
+    #         self.mpc.create_periodic_constraint_geometrical(
+    #             self.V, boundary_locator, periodic_relation, self.bcs
+    #         )
+    #         self.mpc.finalize()
 
     def _setup_weak_forms(self):
         """Builds the Voigt strain measures and the residual/tangent weak forms."""

@@ -24,7 +24,7 @@ if not os.getenv("DISPLAY"):
     pv.OFF_SCREEN = True
 
 # User-defined choices for solver and debugging
-key_micromodel = 'j2'  # 'composite_coarse'
+key_micromodel = 'composite_medium'  # 'j2' 'composite_coarse' 
 direct_solver_macro = True
 direct_solver_micro = True
 verbose_quad = False
@@ -202,7 +202,7 @@ def main():
     # ==========================================================================
 
     L, H = 1.0, 1.0
-    nx, ny = 1, 1
+    nx, ny = 2, 2
 
     macromodel = Macromodel(L, H, nx, ny)
     macromodel._create_mesh()
@@ -216,7 +216,7 @@ def main():
         print("Allocating master RVE template and initializing solver.")
 
     # TODO: create function for setting material properties of micromodel phases
-    # TODO: add validation curves from jive
+    # TODO: debug why simulation crashes with macroscopic mesh refinement
     # TODO: plot macro and micromodels
 
     master_rve = Micromodel(direct_solver=direct_solver_micro,
@@ -250,12 +250,18 @@ def main():
     displacement_history = []
     load_history = []
 
-    # Create the load function prescribing displacement at the right edge
+    # Create the load function prescribing displacement at the right edge        
     step_size = 0.001
-    n_steps = 60
+    n_steps = 60        
+    if key_micromodel == 'composite_medium':
+        # TOD: debug why is there a different stiffness depending on step_size
+        step_size = 0.00025
+        n_steps = 240
+
     macro_loading = _create_loading_function(n_steps=n_steps, start=0, end=(n_steps - 1) * step_size)
-    # macro_loading = _create_loading_function(load_type='cyclic', n_steps=15, unl_norm=0.03, rel_norm=0.05)
+   # macro_loading = _create_loading_function(load_type='cyclic', n_steps=15, unl_norm=0.03, rel_norm=0.05)
     # macro_loading = _create_loading_function(load_type='gp', n_steps=50, seed=1)
+
 
     if is_root:
         print("\n--- Starting FE2 simulation ---")
