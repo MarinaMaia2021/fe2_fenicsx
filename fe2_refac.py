@@ -24,7 +24,7 @@ if not os.getenv("DISPLAY"):
     pv.OFF_SCREEN = True
 
 # User-defined choices for solver and debugging
-key_micromodel = 'composite_medium'  # 'j2' 'composite_coarse' 
+key_micromodel = 'j2'  # 'j2' 'composite_coarse' 
 direct_solver_macro = True
 direct_solver_micro = True
 verbose_quad = False
@@ -32,7 +32,6 @@ verbose_macro = False
 verbose_micro = False
 max_substeps_macro = 2
 strain_factor = 2.0
-
 
 def _load_micromodel_class(key_micromodel):
     """Imports and returns the Micromodel class matching `key_micromodel`."""
@@ -155,7 +154,7 @@ def _record_converged_step(step_index, target_disp, macromodel, macro_qmap, gdim
     num_local_cells = macromodel.domain.topology.index_map(macromodel.domain.topology.dim).size_local
     print(f"Rank {macromodel.domain.comm.Get_rank()} has {num_local_cells} elements.", flush=True)
     macromodel.domain.comm.Barrier()
-
+    
     plot.update(macromodel.domain, gdim, macromodel.u, macro_qmap, macromodel.stress_field, step_index, fixed_bounds)
     macromodel.domain.comm.Barrier()
 
@@ -242,7 +241,7 @@ def main():
     # ==========================================================================
 
     # Track strain-stress of element track_cell_id for visual inspection
-    track_cell_id = 0
+    track_cell_id = 2
     plot_tracked_cell = True
     target_cell_history = {"strain_xx": [], "stress_xx": []}
 
@@ -345,6 +344,8 @@ def main():
         
         if plot_tracked_cell:
             _plot_tracked_cell_response(target_cell_history, track_cell_id)
+            
+        _print_cell_coordinates(macromodel.domain, track_cell_id )
 
 
 if __name__ == "__main__":

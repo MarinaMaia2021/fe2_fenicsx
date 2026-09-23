@@ -568,6 +568,7 @@ class Micromodel:
         self.v.x.array[:] = v_init if v_init is not None else 0.0
 
         micro_converged = self._solve_micro_newton()
+        
         if not micro_converged:
             return False, np.zeros(3), np.zeros((3, 3)), self.v.x.array.copy(), self.ep_curr.x.array.copy(), self.ep_eq_curr.x.array.copy()
 

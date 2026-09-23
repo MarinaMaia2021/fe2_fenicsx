@@ -177,7 +177,7 @@ class plottingDomain:
         # Ensure coordinates are 3D for PyVista
         if x_coords.shape[1] == 2:
             coords_3d = np.zeros((x_coords.shape[0], 3), dtype=np.float64)
-            coords_3d[:, :2] = x_coords
+            coords_3d[:, 0:2] = x_coords
         else:
             coords_3d = x_coords
 
@@ -195,7 +195,6 @@ class plottingDomain:
         local_u[:n_assign, :dim] = u_array[:n_assign]
 
         # Extract cell stress values
-        macro_stress_field.x.scatter_forward()
         stress_vals = macro_stress_field.x.array
 
         if rank == 0:
@@ -203,8 +202,7 @@ class plottingDomain:
             grid = pv.UnstructuredGrid(topology, cell_types, coords_3d)
             grid.point_data["Displacement"] = local_u
             
-            if len(stress_vals) >= grid.n_cells:
-                grid.cell_data["Stress_xx"] = stress_vals[:grid.n_cells]
+            grid.cell_data["Stress_xx"] = stress_vals.reshape(grid.n_cells, -1)[:, 0]
 
             # Warp grid by displacement
             deformed_grid = grid.warp_by_vector("Displacement", factor=1.0)
@@ -217,7 +215,7 @@ class plottingDomain:
                 grid, 
                 style="wireframe", 
                 color="black", 
-                line_width=2,
+                line_width=1,
                 label="Undeformed Mesh"
             )
 
@@ -229,8 +227,8 @@ class plottingDomain:
                 cmap="coolwarm", 
                 clim = [0, 80],
                 show_edges=True,
-                edge_color="blue",
-                line_width=2,
+                edge_color="red",
+                line_width=1,
                 opacity=0.85
             )
 
